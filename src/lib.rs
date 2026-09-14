@@ -319,31 +319,14 @@ impl Loopback for CanOpenTransport {
     /// In order on one thread: the node answers as the master transmits, so
     /// the download goes first and the upload reads it back.
     fn round(&self, payload: &[u8]) -> Result<Arrived> {
-        let far = self.far_end()?;
-        self.send_to(far.address(), payload)?;
-        let arrived = far.take_one()?;
-        if arrived.bytes != payload {
-            return Err(protocol_error("downloaded, but what uploaded back differs"));
-        }
-        Ok(arrived)
+        self.round_in_order(payload)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The shapes a protocol breaks on, as the Playground lists them.
-    fn edge_payloads() -> Vec<(&'static str, Vec<u8>)> {
-        vec![
-            ("empty", Vec::new()),
-            ("one byte", vec![0x2a]),
-            ("every byte", (0..=255).collect()),
-            ("nul run", vec![0; 512]),
-            ("high bytes", vec![0xff; 512]),
-            ("crlf storm", b"\r\n".repeat(400)),
-        ]
-    }
+    use transport::payload::edge_payloads;
 
     #[test]
     fn a_loopback_round_downloads_a_domain_and_uploads_it_back() {
