@@ -29,11 +29,13 @@ use std::time::{Duration, Instant};
 use can_bus::{Bus, Frame};
 pub use node::{Command, Node, State};
 pub use sdo::Sdo;
+use transport::arrived::next_arrival;
 use transport::error::{Result, protocol_error};
+use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
 use transport::{Arrived, Directions, Transport};
 
-use crate::sdo::{CLIENT_BASE, EXPEDITED_DATA, SEGMENT_DATA, SERVER_BASE};
+use crate::sdo::{CAN, CLIENT_BASE, SERVER_BASE, client};
 
 /// The object a Stream travels as unless a target says otherwise: the
 /// first manufacturer-specific index, a domain.
@@ -114,43 +116,7 @@ impl CanOpenTransport {
     /// # Errors
     /// A node that aborts, answers out of turn, or stops answering.
     pub fn download(&self, node: u8, index: u16, subindex: u8, bytes: &[u8]) -> Result<()> {
-        let expedited =
-            (!bytes.is_empty() && bytes.len() <= EXPEDITED_DATA).then(|| bytes.to_vec());
-        let segmented = expedited.is_none();
-        let open = Sdo::InitiateDownload {
-            index,
-            subindex,
-            expedited,
-            size: u32::try_from(bytes.len())
-                .map_err(|_| protocol_error("over what an SDO sizes"))?,
-        };
-        match self.request(node, &open)? {
-            Sdo::DownloadAccepted { .. } => {}
-            other => return Err(unexpected(&other)),
-        }
-        if !segmented {
-            return Ok(());
-        }
-        let mut toggle = false;
-        let chunks: Vec<&[u8]> = if bytes.is_empty() {
-            vec![&[]]
-        } else {
-            bytes.chunks(SEGMENT_DATA).collect()
-        };
-        let total = chunks.len();
-        for (n, chunk) in chunks.into_iter().enumerate() {
-            let segment = Sdo::DownloadSegment {
-                toggle,
-                data: chunk.to_vec(),
-                last: n + 1 == total,
-            };
-            match self.request(node, &segment)? {
-                Sdo::SegmentAccepted { toggle: took } if took == toggle => {}
-                other => return Err(unexpected(&other)),
-            }
-            toggle = !toggle;
-        }
-        Ok(())
+        client::download(&CAN, index, subindex, bytes, |sdo| self.request(node, sdo))
     }
 
     /// Read `index:subindex` from `node`.
@@ -158,40 +124,14 @@ impl CanOpenTransport {
     /// # Errors
     /// A node that aborts, answers out of turn, or stops answering.
     pub fn upload(&self, node: u8, index: u16, subindex: u8) -> Result<Vec<u8>> {
-        let ask = Sdo::InitiateUpload { index, subindex };
-        let size = match self.request(node, &ask)? {
-            Sdo::UploadOpened {
-                expedited: Some(data),
-                ..
-            } => return Ok(data),
-            Sdo::UploadOpened { size, .. } => size,
-            other => return Err(unexpected(&other)),
-        };
-        let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
-        let mut toggle = false;
-        loop {
-            match self.request(node, &Sdo::UploadSegment { toggle })? {
-                Sdo::UploadData {
-                    toggle: got,
-                    data,
-                    last,
-                } if got == toggle => {
-                    bytes.extend_from_slice(&data);
-                    if last {
-                        return Ok(bytes);
-                    }
-                }
-                other => return Err(unexpected(&other)),
-            }
-            toggle = !toggle;
-        }
+        client::upload(&CAN, index, subindex, |sdo| self.request(node, sdo))
     }
 
     /// One SDO request to `node` and its answer.
     fn request(&self, node: u8, request: &Sdo) -> Result<Sdo> {
         let node = u32::from(node);
         self.bus
-            .transmit(&Frame::new(CLIENT_BASE + node, false, &request.encode())?)?;
+            .transmit(&Frame::new(CLIENT_BASE + node, false, &request.encode()?)?)?;
         let deadline = Instant::now() + self.timeout;
         loop {
             if let Some(frame) = self.bus.receive(self.timeout)? {
@@ -234,13 +174,6 @@ impl CanOpenTransport {
     }
 }
 
-fn unexpected(answer: &Sdo) -> transport::TransportError {
-    match answer {
-        Sdo::Abort { code, .. } => protocol_error(format!("the node aborted with {code:#010x}")),
-        other => protocol_error(format!("the node answered out of turn: {other:?}")),
-    }
-}
-
 impl Transport for CanOpenTransport {
     fn name(&self) -> &'static str {
         "canopen"
@@ -280,34 +213,16 @@ impl CanOpenTransport {
     }
 }
 
-/// The node holding what the master wrote, until it is uploaded back.
-struct Holding {
-    master: CanOpenTransport,
-    address: String,
-}
-
-impl FarEnd for Holding {
-    fn address(&self) -> &str {
-        &self.address
-    }
-
-    fn take_one(self: Box<Self>) -> Result<Arrived> {
-        self.master
-            .receive()?
-            .into_iter()
-            .next()
-            .ok_or_else(|| protocol_error("nothing came back from the node"))
-    }
-}
-
 /// A Stream of any length travels as a segmented domain: the SDO size is
 /// thirty-two bits, and no ceiling below that is a fact of the protocol.
 impl Loopback for CanOpenTransport {
+    /// The node holding what the master wrote, until it is uploaded back.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
-        Ok(Box::new(Holding {
-            master: self.clone(),
-            address: self.origin(self.node, self.index, self.subindex),
-        }))
+        let master = self.clone();
+        Ok(Box::new(Held::new(
+            self.origin(self.node, self.index, self.subindex),
+            move || next_arrival(master.receive()?, "nothing came back from the node"),
+        )))
     }
 
     fn send_to(&self, address: &str, payload: &[u8]) -> Result<()> {

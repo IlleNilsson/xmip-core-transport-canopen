@@ -1,25 +1,22 @@
 //! A `CANopen` node on an in-process bus: what a test or the loopback puts at
 //! the far end so a master can be driven without a drive in the room.
 //!
-//! Not a device profile. One node holds an object dictionary of byte
-//! vectors keyed by index and subindex, obeys NMT, serves SDO uploads and
-//! downloads to it — expedited and segmented, with the toggle checked and
-//! the aborts `CiA 301` names — takes its first receive PDO into the
-//! dictionary when operational, and answers a start with a heartbeat. It
+//! Not a device profile. One node holds an object dictionary its SDO
+//! [`Server`] answers from over one CAN frame, obeys NMT, takes its first
+//! receive PDO into the dictionary when operational, and answers a start
+//! with a heartbeat. It
 //! is a [`Bus`]: what the master transmits, the node answers, and the answer
 //! is what the master receives next.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::sync::{Mutex, PoisonError};
 use std::time::Duration;
 
 use can_bus::{Bus, Frame};
 use transport::error::Result;
 
-use crate::sdo::{
-    ABORT_COMMAND, ABORT_LENGTH, ABORT_NO_OBJECT, ABORT_TOGGLE, CLIENT_BASE, EXPEDITED_DATA,
-    SEGMENT_DATA, SERVER_BASE, Sdo,
-};
+use crate::sdo::server::Server;
+use crate::sdo::{ABORT_COMMAND, CAN, CLIENT_BASE, SERVER_BASE, Sdo};
 
 /// The COB-ID of network management: every node listens.
 pub const NMT: u32 = 0x000;
@@ -63,21 +60,9 @@ impl State {
     }
 }
 
-/// A segmented transfer in progress.
-struct Transfer {
-    index: u16,
-    subindex: u8,
-    toggle: bool,
-    bytes: Vec<u8>,
-    /// How far an upload has been read.
-    at: usize,
-}
-
 struct Inner {
     state: State,
-    dictionary: HashMap<(u16, u8), Vec<u8>>,
-    download: Option<Transfer>,
-    upload: Option<Transfer>,
+    sdo: Server,
     to_master: VecDeque<Frame>,
 }
 
@@ -92,15 +77,11 @@ impl Node {
     /// `0x1000:00` and nothing else.
     #[must_use]
     pub fn new(id: u8) -> Self {
-        let mut dictionary = HashMap::new();
-        dictionary.insert((0x1000, 0), vec![0, 0, 0, 0]);
         Self {
             id,
             inner: Mutex::new(Inner {
                 state: State::PreOperational,
-                dictionary,
-                download: None,
-                upload: None,
+                sdo: Server::new(CAN),
                 to_master: VecDeque::new(),
             }),
         }
@@ -112,8 +93,8 @@ impl Node {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .dictionary
-            .insert((index, subindex), bytes.into());
+            .sdo
+            .insert(index, subindex, bytes.into());
         self
     }
 
@@ -129,9 +110,9 @@ impl Node {
         self.inner
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .dictionary
-            .get(&(index, subindex))
-            .cloned()
+            .sdo
+            .object(index, subindex)
+            .map(<[u8]>::to_vec)
     }
 
     /// Where the node is.
@@ -150,12 +131,19 @@ impl Node {
             inner.nmt(self.id, &frame.data);
         } else if frame.id == CLIENT_BASE + id {
             let answer = match Sdo::decode(&frame.data, true) {
-                Ok(request) => inner.serve(request),
-                Err(_) => abort(0, 0, ABORT_COMMAND),
+                Ok(request) => inner.sdo.serve(request),
+                Err(_) => Sdo::Abort {
+                    index: 0,
+                    subindex: 0,
+                    code: ABORT_COMMAND,
+                },
             };
-            inner.answer(SERVER_BASE + id, &answer.encode());
+            if let Ok(bytes) = answer.encode() {
+                inner.answer(SERVER_BASE + id, &bytes);
+            }
         } else if frame.id == RPDO1_BASE + id && inner.state == State::Operational {
-            inner.dictionary.insert(RPDO1_OBJECT, frame.data.clone());
+            let (index, subindex) = RPDO1_OBJECT;
+            inner.sdo.insert(index, subindex, frame.data.clone());
         }
     }
 }
@@ -174,8 +162,7 @@ impl Inner {
             0x80 | 0x81 => State::PreOperational,
             _ => return,
         };
-        self.download = None;
-        self.upload = None;
+        self.sdo.abandon();
         let state = self.state.code();
         self.answer(HEARTBEAT_BASE + u32::from(id), &[state]);
     }
@@ -184,127 +171,6 @@ impl Inner {
         if let Ok(frame) = Frame::new(id, false, data) {
             self.to_master.push_back(frame);
         }
-    }
-
-    fn serve(&mut self, request: Sdo) -> Sdo {
-        match request {
-            Sdo::InitiateDownload {
-                index,
-                subindex,
-                expedited,
-                size,
-            } => self.open_download(index, subindex, expedited, size),
-            Sdo::DownloadSegment { toggle, data, last } => self.segment(toggle, &data, last),
-            Sdo::InitiateUpload { index, subindex } => self.open_upload(index, subindex),
-            Sdo::UploadSegment { toggle } => self.next_segment(toggle),
-            Sdo::Abort { .. } => {
-                self.download = None;
-                self.upload = None;
-                abort(0, 0, ABORT_COMMAND)
-            }
-            _ => abort(0, 0, ABORT_COMMAND),
-        }
-    }
-
-    fn open_download(&mut self, index: u16, sub: u8, expedited: Option<Vec<u8>>, size: u32) -> Sdo {
-        if !self.dictionary.contains_key(&(index, sub)) {
-            return abort(index, sub, ABORT_NO_OBJECT);
-        }
-        match expedited {
-            Some(data) => {
-                self.dictionary.insert((index, sub), data);
-            }
-            None => {
-                self.download = Some(Transfer {
-                    index,
-                    subindex: sub,
-                    toggle: false,
-                    bytes: Vec::with_capacity(usize::try_from(size).unwrap_or(0)),
-                    at: 0,
-                });
-            }
-        }
-        Sdo::DownloadAccepted {
-            index,
-            subindex: sub,
-        }
-    }
-
-    fn segment(&mut self, toggle: bool, data: &[u8], last: bool) -> Sdo {
-        let Some(transfer) = self.download.as_mut() else {
-            return abort(0, 0, ABORT_COMMAND);
-        };
-        if toggle != transfer.toggle {
-            let (index, sub) = (transfer.index, transfer.subindex);
-            self.download = None;
-            return abort(index, sub, ABORT_TOGGLE);
-        }
-        transfer.toggle = !toggle;
-        transfer.bytes.extend_from_slice(data);
-        if last {
-            let Some(done) = self.download.take() else {
-                return abort(0, 0, ABORT_COMMAND);
-            };
-            self.dictionary
-                .insert((done.index, done.subindex), done.bytes);
-        }
-        Sdo::SegmentAccepted { toggle }
-    }
-
-    fn open_upload(&mut self, index: u16, sub: u8) -> Sdo {
-        let Some(bytes) = self.dictionary.get(&(index, sub)).cloned() else {
-            return abort(index, sub, ABORT_NO_OBJECT);
-        };
-        let size = u32::try_from(bytes.len()).unwrap_or(u32::MAX);
-        if bytes.len() <= EXPEDITED_DATA && !bytes.is_empty() {
-            return Sdo::UploadOpened {
-                index,
-                subindex: sub,
-                expedited: Some(bytes),
-                size,
-            };
-        }
-        self.upload = Some(Transfer {
-            index,
-            subindex: sub,
-            toggle: false,
-            bytes,
-            at: 0,
-        });
-        Sdo::UploadOpened {
-            index,
-            subindex: sub,
-            expedited: None,
-            size,
-        }
-    }
-
-    fn next_segment(&mut self, toggle: bool) -> Sdo {
-        let Some(transfer) = self.upload.as_mut() else {
-            return abort(0, 0, ABORT_LENGTH);
-        };
-        if toggle != transfer.toggle {
-            let (index, sub) = (transfer.index, transfer.subindex);
-            self.upload = None;
-            return abort(index, sub, ABORT_TOGGLE);
-        }
-        transfer.toggle = !toggle;
-        let end = (transfer.at + SEGMENT_DATA).min(transfer.bytes.len());
-        let data = transfer.bytes[transfer.at..end].to_vec();
-        transfer.at = end;
-        let last = end == transfer.bytes.len();
-        if last {
-            self.upload = None;
-        }
-        Sdo::UploadData { toggle, data, last }
-    }
-}
-
-const fn abort(index: u16, subindex: u8, code: u32) -> Sdo {
-    Sdo::Abort {
-        index,
-        subindex,
-        code,
     }
 }
 
@@ -333,6 +199,7 @@ impl Bus for Node {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sdo::{ABORT_NO_OBJECT, ABORT_TOGGLE, Opening};
 
     fn answer(node: &Node, id: u32, data: &[u8]) -> Frame {
         node.transmit(&Frame::new(id, false, data).expect("frame"))
@@ -374,10 +241,12 @@ mod tests {
         let open = Sdo::InitiateDownload {
             index: 0x9999,
             subindex: 0,
-            expedited: None,
-            size: 1,
+            opening: Opening::Sized {
+                size: 1,
+                data: Vec::new(),
+            },
         };
-        let refused = answer(&node, CLIENT_BASE + 1, &open.encode());
+        let refused = answer(&node, CLIENT_BASE + 1, &open.encode().expect("encode"));
         assert_eq!(refused.id, SERVER_BASE + 1);
         assert_eq!(
             Sdo::decode(&refused.data, false).expect("abort"),
@@ -390,16 +259,18 @@ mod tests {
         let open = Sdo::InitiateDownload {
             index: 0x2000,
             subindex: 0,
-            expedited: None,
-            size: 3,
+            opening: Opening::Sized {
+                size: 3,
+                data: Vec::new(),
+            },
         };
-        answer(&node, CLIENT_BASE + 1, &open.encode());
+        answer(&node, CLIENT_BASE + 1, &open.encode().expect("encode"));
         let wrong = Sdo::DownloadSegment {
             toggle: true,
             data: vec![1],
             last: true,
         };
-        let aborted = answer(&node, CLIENT_BASE + 1, &wrong.encode());
+        let aborted = answer(&node, CLIENT_BASE + 1, &wrong.encode().expect("encode"));
         assert!(matches!(
             Sdo::decode(&aborted.data, false).expect("abort"),
             Sdo::Abort {
