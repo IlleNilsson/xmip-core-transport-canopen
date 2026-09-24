@@ -393,7 +393,7 @@ mod tests {
         master.pdo(2, &[0xaa, 0x55]).expect("pdo");
         assert_eq!(node.object(0x6200, 1), Some(vec![0xaa, 0x55]));
         assert!(master.pdo(2, &[0; 9]).is_err(), "nine bytes is no PDO");
-        let quiet = CanOpenTransport::new(Arc::new(can_bus::Loopback::new()), 9)
+        let quiet = CanOpenTransport::new(Arc::new(sdk::broadcast::Medium::new("can0").node()), 9)
             .timing_out_after(Duration::from_millis(20));
         assert!(quiet.receive().is_err(), "nobody answers on an empty bus");
     }

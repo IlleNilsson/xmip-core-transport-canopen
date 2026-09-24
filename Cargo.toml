@@ -22,6 +22,8 @@ transport = { package = "xmip-core-transport", git = "https://github.com/IlleNil
 can_bus = { package = "xmip-core-transport-can-bus", git = "https://github.com/IlleNilsson/xmip-core-transport-can-bus", branch = "main" }
 
 [dev-dependencies]
+# The simulated bus a loopback's parties are nodes on (ADR-0061).
+sdk = { package = "xmip-core-sdk", git = "https://github.com/IlleNilsson/xmip-core-sdk", branch = "main" }
 # The loopback payloads the tests drive, from the capability's test
 # support and never a production build (ADR-0044).
 transport = { package = "xmip-core-transport", git = "https://github.com/IlleNilsson/xmip-core-transport", branch = "main", features = ["test-support"] }
