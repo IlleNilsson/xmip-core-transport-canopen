@@ -1,6 +1,6 @@
 # xmip-core-transport-canopen
 
-CANopen transport: CiA 301 over CAN — NMT, expedited and segmented SDO to an object dictionary index and subindex, PDO mapping at its minimum; a Stream travels as a domain object. A technology of [xmip-core-transport](https://github.com/IlleNilsson/xmip-core-transport).
+CANopen transport: CiA 301 over CAN — NMT, expedited and segmented SDO to an object dictionary index and subindex, PDO mapping at its minimum; a Stream travels as a domain object. The SDO here — codec, client and server — is the one the ethercat technology carries as CoE. A technology of [xmip-core-transport](https://github.com/IlleNilsson/xmip-core-transport).
 
 ## Toolchain
 
