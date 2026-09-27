@@ -33,13 +33,18 @@ use transport::arrived::next_arrival;
 use transport::error::{Result, protocol_error};
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Directions, Transport};
+use transport::{Arrived, Configured, Directions, Transport};
+use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 use crate::sdo::{CAN, CLIENT_BASE, SERVER_BASE, client};
 
 /// The object a Stream travels as unless a target says otherwise: the
 /// first manufacturer-specific index, a domain.
 pub const STREAM_OBJECT: (u16, u8) = (0x2000, 0);
+
+/// How long a node that stops answering is waited on when a Location says
+/// nothing else.
+pub const TIMEOUT: Duration = Duration::from_secs(1);
 
 /// The master's side of one bus, addressing one node's one object.
 #[derive(Clone)]
@@ -60,7 +65,7 @@ impl CanOpenTransport {
             node,
             index: STREAM_OBJECT.0,
             subindex: STREAM_OBJECT.1,
-            timeout: Duration::from_secs(1),
+            timeout: TIMEOUT,
         }
     }
 
@@ -199,6 +204,64 @@ impl Transport for CanOpenTransport {
     }
 }
 
+impl Configured for CanOpenTransport {
+    /// The address is the CAN bus the master is on, as
+    /// `can_bus::open_bus` opens it: `can0`.
+    const SETTINGS: &'static Settings = &Settings {
+        technology: env!("CARGO_PKG_NAME"),
+        settings: &[
+            Setting {
+                name: "node",
+                kind: Kind::Integer {
+                    minimum: 1,
+                    maximum: 127,
+                },
+                presence: Presence::Required,
+                meaning: "The node whose object dictionary a Location reads or writes.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "index",
+                kind: Kind::Integer {
+                    minimum: 0,
+                    maximum: 0xffff,
+                },
+                presence: Presence::Default(Fixed::Integer(STREAM_OBJECT.0 as i64)),
+                meaning: "The object's index in the dictionary.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "subindex",
+                kind: Kind::Integer {
+                    minimum: 0,
+                    maximum: 255,
+                },
+                presence: Presence::Default(Fixed::Integer(STREAM_OBJECT.1 as i64)),
+                meaning: "The object's subindex under its index.",
+                applies: Applies::Both,
+            },
+            Setting {
+                name: "timeout",
+                kind: Kind::Duration,
+                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
+                meaning: "How long a node that stops answering is waited on.",
+                applies: Applies::Both,
+            },
+        ],
+    };
+
+    fn configured(address: &str, settings: &Read) -> Result<Self> {
+        let out_of_range = |name: &str| protocol_error(format!("{name} out of range"));
+        let node = u8::try_from(settings.integer("node")).map_err(|_| out_of_range("node"))?;
+        let index = u16::try_from(settings.integer("index")).map_err(|_| out_of_range("index"))?;
+        let subindex =
+            u8::try_from(settings.integer("subindex")).map_err(|_| out_of_range("subindex"))?;
+        Ok(Self::new(can_bus::open_bus(address)?, node)
+            .about(index, subindex)
+            .timing_out_after(settings.duration("timeout")))
+    }
+}
+
 impl CanOpenTransport {
     /// Both ends on one in-process bus: a master and node 1, started, the
     /// Stream object empty, the loopback timeout on the master.
@@ -240,6 +303,26 @@ impl Loopback for CanOpenTransport {
 mod tests {
     use super::*;
     use transport::payload::edge_payloads;
+    use xcore::settings::Given;
+
+    #[test]
+    fn canopen_declares_its_settings_and_reads_through_them() {
+        assert_eq!(CanOpenTransport::SETTINGS.problems(), Vec::<String>::new());
+        let given = [
+            ("node".to_string(), Given::Integer(5)),
+            ("index".to_string(), Given::Integer(0x6040)),
+            ("timeout".to_string(), Given::Text("200ms".to_string())),
+        ];
+        let built = CanOpenTransport::open("can0", Applies::Send, &given).expect("built");
+        assert_eq!(built.node, 5);
+        assert_eq!((built.index, built.subindex), (0x6040, STREAM_OBJECT.1));
+        assert_eq!(built.timeout, Duration::from_millis(200));
+        assert_eq!(built.origin(5, 0x6040, 0), "canopen://can0/5/0x6040/0");
+        let Err(refused) = CanOpenTransport::open("can0", Applies::Receive, &[]) else {
+            panic!("node is required");
+        };
+        assert!(refused.message.contains("\"node\""), "{}", refused.message);
+    }
 
     #[test]
     fn a_loopback_round_downloads_a_domain_and_uploads_it_back() {
