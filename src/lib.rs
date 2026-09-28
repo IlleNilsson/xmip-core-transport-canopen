@@ -27,6 +27,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use can_bus::{Bus, Frame};
+use codec::hex::prefixed_number;
+use net::Target;
 pub use node::{Command, Node, State};
 pub use sdo::Sdo;
 use transport::arrived::next_arrival;
@@ -159,7 +161,9 @@ impl CanOpenTransport {
     /// # Errors
     /// A target that is not `<node>/0x<index>/<sub>`.
     fn resolve(&self, target: &str) -> Result<(u8, u16, u8)> {
-        let path = match transport::socket::target("canopen", target) {
+        let path = match Target::under(&["canopen"], target)
+            .map(|named| (named.authority(), named.path()))
+        {
             Some((_, path)) => path,
             None => target,
         };
@@ -171,8 +175,7 @@ impl CanOpenTransport {
         let node = parts.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
         let index = parts
             .next()
-            .and_then(|hex| hex.strip_prefix("0x"))
-            .and_then(|hex| u16::from_str_radix(hex, 16).ok())
+            .and_then(|hex| prefixed_number(hex).ok())
             .ok_or_else(bad)?;
         let subindex = parts.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
         Ok((node, index, subindex))

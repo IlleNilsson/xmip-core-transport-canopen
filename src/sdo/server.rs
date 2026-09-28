@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use super::{ABORT_COMMAND, ABORT_LENGTH, ABORT_NO_OBJECT, ABORT_TOGGLE, Opening, Sdo, Window};
 
 /// The device type every dictionary holds, `CiA 301` section 7.5.2.1.
-pub const DEVICE_TYPE: (u16, u8) = (0x1000, 0);
+const DEVICE_TYPE: (u16, u8) = (0x1000, 0);
 
 /// A segmented transfer in progress.
 struct Transfer {
