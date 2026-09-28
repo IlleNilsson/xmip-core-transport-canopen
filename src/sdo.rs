@@ -29,11 +29,11 @@ pub const CLIENT_BASE: u32 = 0x600;
 pub const SERVER_BASE: u32 = 0x580;
 
 /// The shortest SDO: a command specifier, index, subindex and four bytes.
-pub const SDO_LENGTH: usize = 8;
+const SDO_LENGTH: usize = 8;
 /// The payload a segment of one CAN frame carries beside its specifier.
 pub const SEGMENT_DATA: usize = 7;
 /// The payload an expedited transfer carries beside index and subindex.
-pub const EXPEDITED_DATA: usize = 4;
+const EXPEDITED_DATA: usize = 4;
 
 /// The object does not exist in the object dictionary.
 pub const ABORT_NO_OBJECT: u32 = 0x0602_0000;

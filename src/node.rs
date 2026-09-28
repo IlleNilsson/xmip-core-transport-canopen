@@ -21,15 +21,13 @@ use crate::sdo::{ABORT_COMMAND, CAN, CLIENT_BASE, SERVER_BASE, Sdo};
 /// The COB-ID of network management: every node listens.
 pub const NMT: u32 = 0x000;
 /// The COB-ID a node's heartbeat goes under, plus the node.
-pub const HEARTBEAT_BASE: u32 = 0x700;
+const HEARTBEAT_BASE: u32 = 0x700;
 /// The COB-ID of a node's first receive PDO, plus the node.
 pub const RPDO1_BASE: u32 = 0x200;
-/// The COB-ID of a node's first transmit PDO, plus the node.
-pub const TPDO1_BASE: u32 = 0x180;
 
 /// The object the first receive PDO is mapped to: write output 8-bit,
 /// subindex 1, as `CiA 401` maps it.
-pub const RPDO1_OBJECT: (u16, u8) = (0x6200, 1);
+const RPDO1_OBJECT: (u16, u8) = (0x6200, 1);
 
 /// The NMT commands a master sends.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
