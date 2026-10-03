@@ -16,6 +16,10 @@
 //! the loopback. The carrier is `xmip-core-transport-can-bus`: this crate
 //! rides its [`Bus`] and [`Frame`] rather than knowing a wire of its own.
 //!
+//! **A receive is an SDO upload, which consumes nothing at the node**, so
+//! its verdict has nothing to tell it, whichever it is: a cycle that did not
+//! complete loses nothing, and the next upload reads the object again.
+//!
 //! The origin URI names the bus, the node and the object:
 //! `canopen://<bus>/<node>/0x2000/0`. A target is the same, or a bare
 //! `<node>/0x<index>/<sub>`, or nothing for the configured object.
@@ -35,7 +39,7 @@ use transport::arrived::next_arrival;
 use transport::error::{Result, protocol_error};
 use transport::held::Held;
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
-use transport::{Arrived, Configured, Directions, Transport};
+use transport::{Acknowledgement, Arrived, Configured, Directions, Transport};
 use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
 
 use crate::sdo::{CAN, CLIENT_BASE, SERVER_BASE, client};
@@ -191,12 +195,20 @@ impl Transport for CanOpenTransport {
         Directions::BOTH
     }
 
-    /// One upload of the object: its bytes as one Stream.
+    fn arrivals(&self) -> transport::Arrivals {
+        transport::Arrivals::Ordered("a poll reads again what is not yet told")
+    }
+
+    /// One upload of the object: its bytes as one Stream, whole. The
+    /// verdict has nothing to tell the node, whichever it is: an SDO upload
+    /// consumes nothing, so a cycle that did not complete loses nothing —
+    /// the next upload reads the object again.
     fn receive(&self) -> Result<Vec<Arrived>> {
         let bytes = self.upload(self.node, self.index, self.subindex)?;
-        Ok(vec![Arrived::new(
+        Ok(vec![Arrived::whole(
             self.origin(self.node, self.index, self.subindex),
             bytes,
+            Acknowledgement::unconsumed(),
         )])
     }
 
@@ -287,7 +299,7 @@ impl Loopback for CanOpenTransport {
         let master = self.clone();
         Ok(Box::new(Held::new(
             self.origin(self.node, self.index, self.subindex),
-            move || next_arrival(master.receive()?, "nothing came back from the node"),
+            move || next_arrival(master.receive()?, "nothing came back from the node")?.taken(),
         )))
     }
 
@@ -375,8 +387,17 @@ mod tests {
         assert!(error.message.contains("0x06020000"), "{error}");
         assert!(master.send("5/2001/3", b"x").is_err(), "not hex");
         assert!(master.send("five/0x2001/3", b"x").is_err(), "not a node");
+        let reading = master.about(0x2001, 3);
+        let upload = reading.receive().expect("upload").remove(0);
+        assert!(
+            upload.defers(),
+            "an upload consumes nothing: nothing to lose"
+        );
+        // A refused cycle loses nothing: the next upload reads it again.
+        upload.failed().expect("refused");
+        let again = reading.receive().expect("again").remove(0);
         assert_eq!(
-            master.about(0x2001, 3).receive().expect("upload")[0].bytes,
+            again.taken().expect("taken").bytes,
             [1, 2, 3, 4, 5, 6, 7, 8, 9]
         );
     }
