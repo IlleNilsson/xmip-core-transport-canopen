@@ -32,9 +32,11 @@ use std::time::{Duration, Instant};
 
 use can_bus::{Bus, Frame};
 use codec::hex::prefixed_number;
+use context::property::CANOPEN_NODE_ID;
 use net::Target;
 pub use node::{Command, Node, State};
 pub use sdo::Sdo;
+use transport::ArrivalIdentity;
 use transport::arrived::next_arrival;
 use transport::error::{Result, protocol_error};
 use transport::held::Held;
@@ -205,11 +207,15 @@ impl Transport for CanOpenTransport {
     /// the next upload reads the object again.
     fn receive(&self) -> Result<Vec<Arrived>> {
         let bytes = self.upload(self.node, self.index, self.subindex)?;
-        Ok(vec![Arrived::whole(
-            self.origin(self.node, self.index, self.subindex),
-            bytes,
-            Acknowledgement::unconsumed(),
-        )])
+        Ok(vec![
+            Arrived::whole(
+                self.origin(self.node, self.index, self.subindex),
+                bytes,
+                Acknowledgement::unconsumed(),
+            )
+            .scheduled()
+            .observing(CANOPEN_NODE_ID, self.node.to_string()),
+        ])
     }
 
     /// One download of `bytes` to the object `target` names.
@@ -294,6 +300,10 @@ impl CanOpenTransport {
 /// A Stream of any length travels as a segmented domain: the SDO size is
 /// thirty-two bits, and no ceiling below that is a fact of the protocol.
 impl Loopback for CanOpenTransport {
+    fn arrival_identity(&self) -> ArrivalIdentity {
+        ArrivalIdentity::Named(&[context::property::CANOPEN_NODE_ID])
+    }
+
     /// The node holding what the master wrote, until it is uploaded back.
     fn far_end(&self) -> Result<Box<dyn FarEnd>> {
         let master = self.clone();
