@@ -201,6 +201,10 @@ impl Transport for CanOpenTransport {
         transport::Arrivals::Ordered("a poll reads again what is not yet told")
     }
 
+    fn waiting(&self) -> transport::Waiting {
+        transport::Waiting::Polled("an SDO upload of the object returns at once")
+    }
+
     /// One upload of the object: its bytes as one Stream, whole. The
     /// verdict has nothing to tell the node, whichever it is: an SDO upload
     /// consumes nothing, so a cycle that did not complete loses nothing —
