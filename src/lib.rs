@@ -209,7 +209,7 @@ impl Transport for CanOpenTransport {
     /// verdict has nothing to tell the node, whichever it is: an SDO upload
     /// consumes nothing, so a cycle that did not complete loses nothing —
     /// the next upload reads the object again.
-    fn receive(&self) -> Result<Vec<Arrived>> {
+    fn receive_up_to(&self, _most: usize) -> Result<Vec<Arrived>> {
         let bytes = self.upload(self.node, self.index, self.subindex)?;
         Ok(vec![
             Arrived::whole(
@@ -222,8 +222,13 @@ impl Transport for CanOpenTransport {
         ])
     }
 
+    fn sending(&self) -> transport::Sending {
+        transport::Sending::Gathered("one SDO download carries the whole object")
+    }
+
     /// One download of `bytes` to the object `target` names.
-    fn send(&self, target: &str, bytes: &[u8]) -> Result<()> {
+    fn send_from(&self, target: &str, outgoing: transport::Outgoing<'_>) -> Result<()> {
+        let bytes: &[u8] = &outgoing.gather()?;
         let (node, index, subindex) = self.resolve(target)?;
         self.download(node, index, subindex, bytes)
     }
