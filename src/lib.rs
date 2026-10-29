@@ -167,7 +167,7 @@ impl CanOpenTransport {
     /// # Errors
     /// A target that is not `<node>/0x<index>/<sub>`.
     fn resolve(&self, target: &str) -> Result<(u8, u16, u8)> {
-        let path = match Target::under(&["canopen"], target)
+        let path = match Target::under(Self::SCHEMES, target)
             .map(|named| (named.authority(), named.path()))
         {
             Some((_, path)) => path,
@@ -279,6 +279,9 @@ impl Configured for CanOpenTransport {
             },
         ],
     };
+
+    /// The schemes a Location's address is entered with to choose this technology.
+    const SCHEMES: &'static [&'static str] = &["canopen"];
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let out_of_range = |name: &str| protocol_error(format!("{name} out of range"));
