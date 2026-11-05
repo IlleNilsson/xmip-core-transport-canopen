@@ -28,7 +28,7 @@ codec = { package = "xmip-core-library-codec", git = "https://github.com/IlleNil
 # The settings this technology declares (xcore::settings), read through
 # transport::Configured (ADR-0064, amendment 2026-09-26).
 xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core", branch = "main" }
-# The carrier, declared in architecture.toml: the bus, the frame and the
+# The carrier, declared in architecture.xmip: the bus, the frame and the
 # loopback every CAN protocol rides on come from can-bus, never copied.
 can_bus = { package = "xmip-core-transport-can-bus", git = "https://github.com/IlleNilsson/xmip-core-transport-can-bus", branch = "main" }
 
