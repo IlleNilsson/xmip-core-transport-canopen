@@ -9,8 +9,9 @@
 //! is what the master receives next.
 
 use std::collections::VecDeque;
-use std::sync::{Mutex, PoisonError};
+use std::sync::Mutex;
 use std::time::Duration;
+use xcore::lock::Locked;
 
 use can_bus::{Bus, Frame};
 use transport::error::Result;
@@ -89,8 +90,7 @@ impl Node {
     #[must_use]
     pub fn with_object(self, index: u16, subindex: u8, bytes: impl Into<Vec<u8>>) -> Self {
         self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .locked()
             .sdo
             .insert(index, subindex, bytes.into());
         self
@@ -106,8 +106,7 @@ impl Node {
     #[must_use]
     pub fn object(&self, index: u16, subindex: u8) -> Option<Vec<u8>> {
         self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
+            .locked()
             .sdo
             .object(index, subindex)
             .map(<[u8]>::to_vec)
@@ -116,14 +115,11 @@ impl Node {
     /// Where the node is.
     #[must_use]
     pub fn state(&self) -> State {
-        self.inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .state
+        self.inner.locked().state
     }
 
     fn take(&self, frame: &Frame) {
-        let mut inner = self.inner.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut inner = self.inner.locked();
         let id = u32::from(self.id);
         if frame.id == NMT {
             inner.nmt(self.id, &frame.data);
@@ -180,12 +176,7 @@ impl Bus for Node {
     }
 
     fn receive(&self, _timeout: Duration) -> Result<Option<Frame>> {
-        Ok(self
-            .inner
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .to_master
-            .pop_front())
+        Ok(self.inner.locked().to_master.pop_front())
     }
 
     fn transmit(&self, frame: &Frame) -> Result<()> {
