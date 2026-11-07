@@ -189,6 +189,7 @@ impl Bus for Node {
 mod tests {
     use super::*;
     use crate::sdo::{ABORT_NO_OBJECT, ABORT_TOGGLE, Opening};
+    use std::assert_matches;
 
     fn answer(node: &Node, id: u32, data: &[u8]) -> Frame {
         node.transmit(&Frame::new(id, false, data).expect("frame"))
@@ -260,20 +261,20 @@ mod tests {
             last: true,
         };
         let aborted = answer(&node, CLIENT_BASE + 1, &wrong.encode().expect("encode"));
-        assert!(matches!(
+        assert_matches!(
             Sdo::decode(&aborted.data, false).expect("abort"),
             Sdo::Abort {
                 code: ABORT_TOGGLE,
                 ..
             }
-        ));
+        );
         let garbage = answer(&node, CLIENT_BASE + 1, &[0xff; 8]);
-        assert!(matches!(
+        assert_matches!(
             Sdo::decode(&garbage.data, false).expect("abort"),
             Sdo::Abort {
                 code: ABORT_COMMAND,
                 ..
             }
-        ));
+        );
     }
 }
