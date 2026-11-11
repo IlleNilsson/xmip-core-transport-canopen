@@ -173,9 +173,9 @@ impl CanOpenTransport {
             Some((_, path)) => path,
             None => target,
         };
-        if path.is_empty() {
+        let Some(path) = transport::destination::named(path) else {
             return Ok((self.node, self.index, self.subindex));
-        }
+        };
         let bad = || protocol_error(format!("{target:?} is not <node>/0x<index>/<sub>"));
         let mut parts = path.split('/');
         let node = parts.next().and_then(|n| n.parse().ok()).ok_or_else(bad)?;
@@ -283,6 +283,11 @@ impl Configured for CanOpenTransport {
     /// The schemes a Location's address is entered with to choose this technology.
     const SCHEMES: &'static [&'static str] = &["canopen"];
 
+    /// The node, index and subindex settings: the address names only the bus.
+    fn own_target(_address: &str) -> &str {
+        transport::destination::OWN
+    }
+
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let out_of_range = |name: &str| protocol_error(format!("{name} out of range"));
         let node = u8::try_from(settings.integer("node")).map_err(|_| out_of_range("node"))?;
@@ -341,6 +346,29 @@ mod tests {
     use super::*;
     use transport::payload::edge_payloads;
     use xcore::settings::Given;
+
+    #[test]
+    fn a_send_location_downloads_to_its_object_and_a_target_naming_another_wins() {
+        let given = [
+            ("node".to_string(), Given::Integer(5)),
+            ("index".to_string(), Given::Integer(0x6040)),
+        ];
+        let location = "canopen://can0";
+        let mut near = CanOpenTransport::open(location, Applies::Send, &given).expect("built");
+        // The bus `can0` opens here is a simulated one no other node can
+        // join: the master the Location built goes on the far node's bus.
+        let far = Node::new(5)
+            .with_object(0x6040, STREAM_OBJECT.1, Vec::new())
+            .with_object(0x2000, 1, Vec::new());
+        near.bus = Arc::new(far);
+        near.send(CanOpenTransport::own_target(location), b"own object")
+            .expect("its own");
+        near.send("5/0x2000/1", b"other").expect("another");
+        let own = near.upload(5, 0x6040, STREAM_OBJECT.1).expect("its own");
+        assert_eq!(own, b"own object");
+        assert_eq!(near.upload(5, 0x2000, 1).expect("another"), b"other");
+        assert_eq!(near.resolve("6/0x2000/1").expect("bare"), (6, 0x2000, 1));
+    }
 
     #[test]
     fn canopen_declares_its_settings_and_reads_through_them() {
