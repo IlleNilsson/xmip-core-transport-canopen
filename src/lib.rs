@@ -85,13 +85,6 @@ impl CanOpenTransport {
         self
     }
 
-    /// Give up on a node that stops answering.
-    #[must_use]
-    pub const fn timing_out_after(mut self, timeout: Duration) -> Self {
-        self.timeout = timeout;
-        self
-    }
-
     /// `canopen://<bus>/<node>/0x<index>/<sub>`.
     #[must_use]
     pub fn origin(&self, node: u8, index: u16, subindex: u8) -> String {
@@ -270,13 +263,11 @@ impl Configured for CanOpenTransport {
                 meaning: "The object's subindex under its index.",
                 applies: Applies::Both,
             },
-            Setting {
-                name: "timeout",
-                kind: Kind::Duration,
-                presence: Presence::Default(Fixed::Duration(TIMEOUT)),
-                meaning: "How long a node that stops answering is waited on.",
-                applies: Applies::Both,
-            },
+            transport::configured::timeout(
+                Applies::Both,
+                Some(TIMEOUT),
+                "How long a node that stops answering is waited on.",
+            ),
         ],
     };
 
@@ -288,15 +279,17 @@ impl Configured for CanOpenTransport {
         transport::destination::OWN
     }
 
+    fn timeout_kept(&mut self) -> Option<&mut dyn transport::configured::TimeoutKept> {
+        Some(&mut self.timeout)
+    }
+
     fn configured(address: &str, settings: &Read) -> Result<Self> {
         let out_of_range = |name: &str| protocol_error(format!("{name} out of range"));
         let node = u8::try_from(settings.integer("node")).map_err(|_| out_of_range("node"))?;
         let index = u16::try_from(settings.integer("index")).map_err(|_| out_of_range("index"))?;
         let subindex =
             u8::try_from(settings.integer("subindex")).map_err(|_| out_of_range("subindex"))?;
-        Ok(Self::new(can_bus::open_bus(address)?, node)
-            .about(index, subindex)
-            .timing_out_after(settings.duration("timeout")))
+        Ok(Self::new(can_bus::open_bus(address)?, node).about(index, subindex))
     }
 }
 
