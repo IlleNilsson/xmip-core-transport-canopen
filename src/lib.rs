@@ -284,16 +284,25 @@ impl Configured for CanOpenTransport {
     }
 
     fn configured(address: &str, settings: &Read) -> Result<Self> {
+        Self::on(can_bus::open_bus(address)?, settings)
+    }
+}
+
+impl CanOpenTransport {
+    /// The master a Location's settings build on `bus`: the bus its address
+    /// names, or a simulated one a test gives it.
+    ///
+    /// # Errors
+    /// A node, index or subindex out of its range.
+    pub(crate) fn on(bus: Arc<dyn Bus>, settings: &Read) -> Result<Self> {
         let out_of_range = |name: &str| protocol_error(format!("{name} out of range"));
         let node = u8::try_from(settings.integer("node")).map_err(|_| out_of_range("node"))?;
         let index = u16::try_from(settings.integer("index")).map_err(|_| out_of_range("index"))?;
         let subindex =
             u8::try_from(settings.integer("subindex")).map_err(|_| out_of_range("subindex"))?;
-        Ok(Self::new(can_bus::open_bus(address)?, node).about(index, subindex))
+        Ok(Self::new(bus, node).about(index, subindex))
     }
-}
 
-impl CanOpenTransport {
     /// Both ends on one in-process bus: a master and node 1, started, the
     /// Stream object empty, the loopback timeout on the master.
     #[must_use]
@@ -340,6 +349,16 @@ mod tests {
     use transport::payload::edge_payloads;
     use xcore::settings::Given;
 
+    /// A Location's master built on `bus` from its settings, as `open`
+    /// builds it on the bus its address names: on a simulated bus by its own
+    /// constructor, never by a name a build with `socketcan` hands the kernel
+    /// on Linux (another crate of the estate's one workspace turns it on).
+    fn built_on(bus: Arc<dyn Bus>, side: Applies, given: &[(String, Given)]) -> CanOpenTransport {
+        let read = CanOpenTransport::SETTINGS.read(side, given).expect("read");
+        let built = CanOpenTransport::on(bus, &read).expect("built");
+        built.finished(&read, side)
+    }
+
     #[test]
     fn a_send_location_downloads_to_its_object_and_a_target_naming_another_wins() {
         let given = [
@@ -347,13 +366,11 @@ mod tests {
             ("index".to_string(), Given::Integer(0x6040)),
         ];
         let location = "canopen://can0";
-        let mut near = CanOpenTransport::open(location, Applies::Send, &given).expect("built");
-        // The bus `can0` opens here is a simulated one no other node can
-        // join: the master the Location built goes on the far node's bus.
+        // The master the Location builds goes on the far node's bus.
         let far = Node::new(5)
             .with_object(0x6040, STREAM_OBJECT.1, Vec::new())
             .with_object(0x2000, 1, Vec::new());
-        near.bus = Arc::new(far);
+        let near = built_on(Arc::new(far), Applies::Send, &given);
         near.send(CanOpenTransport::own_target(location), b"own object")
             .expect("its own");
         near.send("5/0x2000/1", b"other").expect("another");
@@ -371,7 +388,7 @@ mod tests {
             ("index".to_string(), Given::Integer(0x6040)),
             ("timeout".to_string(), Given::Text("200ms".to_string())),
         ];
-        let built = CanOpenTransport::open("can0", Applies::Send, &given).expect("built");
+        let built = built_on(can_bus::simulated("can0"), Applies::Send, &given);
         assert_eq!(built.node, 5);
         assert_eq!((built.index, built.subindex), (0x6040, STREAM_OBJECT.1));
         assert_eq!(built.timeout, Duration::from_millis(200));
@@ -456,7 +473,7 @@ mod tests {
         master.pdo(2, &[0xaa, 0x55]).expect("pdo");
         assert_eq!(node.object(0x6200, 1), Some(vec![0xaa, 0x55]));
         assert!(master.pdo(2, &[0; 9]).is_err(), "nine bytes is no PDO");
-        let quiet = CanOpenTransport::new(Arc::new(sdk::broadcast::Medium::new("can0").node()), 9)
+        let quiet = CanOpenTransport::new(can_bus::simulated("can0"), 9)
             .timing_out_after(Duration::from_millis(20));
         assert!(quiet.receive().is_err(), "nobody answers on an empty bus");
     }
