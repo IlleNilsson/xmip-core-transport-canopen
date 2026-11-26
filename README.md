@@ -15,6 +15,10 @@ Its verdict therefore has nothing to tell the node, whichever it is: a receive
 cycle that did not complete loses nothing, and the next upload reads the
 object again. The object's bytes arrive whole.
 
+## The declaration
+
+What a Location of this technology is configured with is two `const`s in its `declaration` module, `src/declaration.rs`, beside the code, which `Configured` reads (ADR-0064, amendment 2026-11-26): `declaration::SETTINGS`, `node`, `index`, `subindex` and `timeout`, and `SCHEMES`, `canopen`; the object and the wait those default to, `declaration::STREAM_OBJECT` and `TIMEOUT`, are declared there too, the code takes them from there, and the crate root names them as before. Built with its `declaration` feature alone (`--no-default-features --features declaration`), the crate is those and nothing more: its code and every crate the code is built on — the can-bus technology it rides on among them — are behind the default feature. So the library the surfaces load can carry it without the code, for the language server and the desktop to suggest and check a CANopen Location's settings though no node in their process loaded the technology, once the gathering crate of open problem 48 links it. `test/Declaration.Test.ps1` in the estate holds that the declaration builds nothing the transport capability does not.
+
 ## Toolchain
 
 `rust-toolchain.toml` pins the toolchain for the whole estate. Do not change it

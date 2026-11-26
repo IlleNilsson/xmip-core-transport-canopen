@@ -23,38 +23,58 @@
 //! The origin URI names the bus, the node and the object:
 //! `canopen://<bus>/<node>/0x2000/0`. A target is the same, or a bare
 //! `<node>/0x<index>/<sub>`, or nothing for the configured object.
+//!
+//! **Built with its `declaration` feature alone** the crate is
+//! [`declaration`], what a Location of it is configured with, and none of
+//! the code above, which is behind the default feature: what the surfaces'
+//! library carries (ADR-0064, amendment 2026-11-26).
 
+#[cfg(feature = "declaration")]
+pub mod declaration;
+#[cfg(feature = "default")]
 pub mod node;
+#[cfg(feature = "default")]
 pub mod sdo;
 
+#[cfg(feature = "default")]
 use std::sync::Arc;
+#[cfg(feature = "default")]
 use std::time::{Duration, Instant};
 
+#[cfg(feature = "default")]
 use can_bus::{Bus, Frame};
+#[cfg(feature = "default")]
 use codec::hex::prefixed_number;
+#[cfg(feature = "default")]
 use context::property::CANOPEN_NODE_ID;
+#[cfg(feature = "declaration")]
+pub use declaration::{STREAM_OBJECT, TIMEOUT};
+#[cfg(feature = "default")]
 use net::Target;
+#[cfg(feature = "default")]
 pub use node::{Command, Node, State};
+#[cfg(feature = "default")]
 pub use sdo::Sdo;
+#[cfg(feature = "default")]
 use transport::ArrivalIdentity;
+#[cfg(feature = "default")]
 use transport::arrived::next_arrival;
+#[cfg(feature = "default")]
 use transport::error::{Result, protocol_error};
+#[cfg(feature = "default")]
 use transport::held::Held;
+#[cfg(feature = "default")]
 use transport::loopback::{FarEnd, LOOPBACK_TIMEOUT, Loopback};
+#[cfg(feature = "default")]
 use transport::{Acknowledgement, Arrived, Configured, Directions, Transport};
-use xcore::settings::{Applies, Fixed, Kind, Presence, Read, Setting, Settings};
+#[cfg(feature = "default")]
+use xcore::settings::{Read, Settings};
 
+#[cfg(feature = "default")]
 use crate::sdo::{CAN, CLIENT_BASE, SERVER_BASE, client};
 
-/// The object a Stream travels as unless a target says otherwise: the
-/// first manufacturer-specific index, a domain.
-pub const STREAM_OBJECT: (u16, u8) = (0x2000, 0);
-
-/// How long a node that stops answering is waited on when a Location says
-/// nothing else.
-pub const TIMEOUT: Duration = Duration::from_secs(1);
-
 /// The master's side of one bus, addressing one node's one object.
+#[cfg(feature = "default")]
 #[derive(Clone)]
 pub struct CanOpenTransport {
     bus: Arc<dyn Bus>,
@@ -64,6 +84,7 @@ pub struct CanOpenTransport {
     timeout: Duration,
 }
 
+#[cfg(feature = "default")]
 impl CanOpenTransport {
     /// A master on `bus` speaking to `node` about [`STREAM_OBJECT`].
     #[must_use]
@@ -181,6 +202,7 @@ impl CanOpenTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Transport for CanOpenTransport {
     fn name(&self) -> &'static str {
         "canopen"
@@ -227,52 +249,10 @@ impl Transport for CanOpenTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl Configured for CanOpenTransport {
-    /// The address is the CAN bus the master is on, as
-    /// `can_bus::open_bus` opens it: `can0`.
-    const SETTINGS: &'static Settings = &Settings {
-        technology: env!("CARGO_PKG_NAME"),
-        settings: &[
-            Setting {
-                name: "node",
-                kind: Kind::Integer {
-                    minimum: 1,
-                    maximum: 127,
-                },
-                presence: Presence::Required,
-                meaning: "The node whose object dictionary a Location reads or writes.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "index",
-                kind: Kind::Integer {
-                    minimum: 0,
-                    maximum: 0xffff,
-                },
-                presence: Presence::Default(Fixed::Integer(STREAM_OBJECT.0 as i64)),
-                meaning: "The object's index in the dictionary.",
-                applies: Applies::Both,
-            },
-            Setting {
-                name: "subindex",
-                kind: Kind::Integer {
-                    minimum: 0,
-                    maximum: 255,
-                },
-                presence: Presence::Default(Fixed::Integer(STREAM_OBJECT.1 as i64)),
-                meaning: "The object's subindex under its index.",
-                applies: Applies::Both,
-            },
-            transport::configured::timeout(
-                Applies::Both,
-                Some(TIMEOUT),
-                "How long a node that stops answering is waited on.",
-            ),
-        ],
-    };
-
-    /// The schemes a Location's address is entered with to choose this technology.
-    const SCHEMES: &'static [&'static str] = &["canopen"];
+    const SETTINGS: &'static Settings = declaration::SETTINGS;
+    const SCHEMES: &'static [&'static str] = declaration::SCHEMES;
 
     /// The node, index and subindex settings: the address names only the bus.
     fn own_target(_address: &str) -> &str {
@@ -288,6 +268,7 @@ impl Configured for CanOpenTransport {
     }
 }
 
+#[cfg(feature = "default")]
 impl CanOpenTransport {
     /// The master a Location's settings build on `bus`: the bus its address
     /// names, or a simulated one a test gives it.
@@ -318,6 +299,7 @@ impl CanOpenTransport {
 
 /// A Stream of any length travels as a segmented domain: the SDO size is
 /// thirty-two bits, and no ceiling below that is a fact of the protocol.
+#[cfg(feature = "default")]
 impl Loopback for CanOpenTransport {
     fn arrival_identity(&self) -> ArrivalIdentity {
         ArrivalIdentity::Named(&[context::property::CANOPEN_NODE_ID])
@@ -347,7 +329,7 @@ impl Loopback for CanOpenTransport {
 mod tests {
     use super::*;
     use transport::payload::edge_payloads;
-    use xcore::settings::Given;
+    use xcore::settings::{Applies, Given};
 
     /// A Location's master built on `bus` from its settings, as `open`
     /// builds it on the bus its address names: on a simulated bus by its own
