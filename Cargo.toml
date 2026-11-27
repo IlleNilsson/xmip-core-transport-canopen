@@ -31,14 +31,10 @@ xcore = { package = "xmip-core", git = "https://github.com/IlleNilsson/xmip-core
 can_bus = { package = "xmip-core-transport-can-bus", git = "https://github.com/IlleNilsson/xmip-core-transport-can-bus", branch = "main", optional = true }
 
 [features]
-# The technology: its code, everything it is built on, and its declaration.
-# Without it the crate is its declaration alone (ADR-0064, amendments
-# 2026-10-22 and 2026-11-26).
+# The code and its declaration: the transport guide's "The declaration",
+# module/core/capability/transport/doc/adding-a-transport.md.
 default = ["declaration", "dep:context", "dep:net", "dep:codec", "dep:can_bus"]
-# The declaration alone: what a Location of this technology is configured
-# with, `declaration::SETTINGS` and `SCHEMES`, with the object and the wait
-# its defaults name, and none of the code — what the surfaces' library is to
-# carry (open problem 48).
+# The declaration alone, with the object and the wait its defaults name.
 declaration = []
 
 [dev-dependencies]
